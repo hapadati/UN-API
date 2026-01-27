@@ -35,9 +35,7 @@ const fastify = Fastify({
     requestIdLogLabel: 'reqId',
 });
 
-/**
- * サーバーを初期化して起動
- */
+// サーバーを初期化して起動
 async function start() {
     try {
         // 環境変数チェック
@@ -58,6 +56,45 @@ async function start() {
 
         // Firebase初期化
         initializeFirebase();
+
+        // ---------------------------------------------------------
+        // [AUTO-INIT] SuperAdminの存在確認と自動付与
+        // ---------------------------------------------------------
+        try {
+            const { getFirestore } = await import('./config/firebase.js');
+            const db = getFirestore();
+            const SUPER_ADMIN_UID = process.env.SUPER_ADMIN_UID || '1420014044055732327';
+
+            // SuperAdminドキュメントの存在確認
+            const saRef = db.collection('superAdmins').doc(SUPER_ADMIN_UID);
+            const saDoc = await saRef.get();
+
+            if (!saDoc.exists) {
+                logger.info({ uid: SUPER_ADMIN_UID }, '[AUTO-INIT] SuperAdmin not found. Creating...');
+                await saRef.set({
+                    userId: SUPER_ADMIN_UID,
+                    role: 'super',
+                    createdAt: new Date(),
+                    permissions: ['approve_admins', 'revoke_admins', 'view_all_logs']
+                });
+
+                // Adminsにも追加
+                await db.collection('admins').doc(SUPER_ADMIN_UID).set({
+                    userId: SUPER_ADMIN_UID,
+                    totpEnabled: false,
+                    grantedAt: new Date(),
+                    grantedBy: 'system',
+                    isSuperAdmin: true
+                }, { merge: true }); // 既存の設定を保持
+
+                logger.info('[AUTO-INIT] SuperAdmin permissions granted successfully.');
+            } else {
+                logger.info('[AUTO-INIT] SuperAdmin verified.');
+            }
+        } catch (initError) {
+            logger.warn({ error: initError.message }, '[AUTO-INIT] Failed to check/init SuperAdmin on startup (Non-fatal)');
+        }
+        // ---------------------------------------------------------
 
         // CORS設定
         await fastify.register(cors, {
